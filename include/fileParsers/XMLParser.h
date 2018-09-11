@@ -4,6 +4,7 @@
 #include <istream>
 #include <vector>
 #include <iostream>
+#include <limits>
 
 #include <Poco/DOM/DOMParser.h>
 #include <Poco/DOM/NodeIterator.h>
@@ -18,6 +19,7 @@
 #include "../Rule.h"
 #include "../Manager.h"
 
+using namespace Poco::XML;
 using namespace std;
 
 class XMLParser {

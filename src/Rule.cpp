@@ -9,8 +9,8 @@
 using namespace std;
 
 Rule::Rule(struct LinkProperties link, struct Metrics metrics) :
-		_qh(0), _egress(0), _counterSize(0), _ts(0) {
-//	memset(_ts, 0, sizeof(struct timeval));
+		_qh(0), _reorderQ(), _egress(new OutputManager()), _maxBWcounterSize(0) {
+	memset(&_maxBWlastTS, 0, sizeof(struct timeval));
 
 	_link._flowID = link._flowID;
 	_link._chain = link._chain;
@@ -56,15 +56,6 @@ void Rule::setMetrics(struct Metrics metrics) {
 	_metrices._reorder_ratio = metrics._reorder_ratio;
 }
 
-void Rule::setEgress(OutputManager* egress) {
-	_egress = egress;
-}
-
-struct nfq_q_handle *Rule::getQueue() {
-	return _qh;
-}
-
-
 void Rule::create(struct nfq_handle* handler) {
 	std::cout << "binding this socket to queue " << _link._flowID << endl << endl;
 	if ((_qh = nfq_create_queue(handler, _link._flowID, &task, this)) < 0){ // the bug is here
@@ -80,7 +71,7 @@ void Rule::create(struct nfq_handle* handler) {
 
 	std::cout << "register this rule into iptables " << _link._flowID << endl << endl;
 	registerRule("A");
-	// TODO : start thread
+	_egress->start(_qh);
 }
 
 void Rule::registerRule(std::string action) {
@@ -122,7 +113,16 @@ void Rule::registerRule(std::string action) {
 void Rule::destroy() {
 	std::cout << "Unregister this rule into iptables " << _link._flowID << endl << endl;
 	registerRule("D");
-	// TODO : stop thread
+	_egress->~OutputManager();
+
+	struct pkt_data *pkt;
+	while (!_reorderQ.empty()){
+		pkt = _reorderQ.front();
+		nfq_set_verdict(_qh, pkt->_id, NF_ACCEPT, 0, NULL);
+		_reorderQ.pop_front();
+		free(pkt);
+	}
+	_reorderQ.clear();
 
 	std::cout << "unbinding from queue " << 0 << endl << endl;
 	nfq_destroy_queue(this->_qh);
@@ -143,64 +143,71 @@ int Rule::_task(struct nfq_q_handle *qh,
 				  void *data)
 {
 	u_int32_t id, verdict, ans;
-	std::cout << "Rule: entering callback, Flow: " << _link._flowID << endl << endl;
+//	std::cout << "Rule: entering callback, Flow: " << _link._flowID << endl << endl;
 
 //	struct nfqnl_msg_packet_hdr *ph = nfq_get_msg_packet_hdr(nfa);
 //	id = ntohl(ph->packet_id);
 //	id = print_pkt(nfa);
-	id = treat_pkt(nfa, &verdict);
+	id = handle_pkt(nfa, &verdict);
+//	std::cout << "Rule: packet " << id << " is " << verdict << endl << endl;
 	ans = nfq_set_verdict(qh, id, verdict, 0, NULL);
 //	ans = nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
 	return ans;
 }
 
-u_int32_t Rule::treat_pkt(struct nfq_data *tb, u_int32_t *verdict) {
+u_int32_t Rule::handle_pkt(struct nfq_data *tb, u_int32_t *verdict) {
 //	u_int32_t id;
-	char *data;
-	size_t size;
+	unsigned char *data;
 	struct pkt_data *pkt = new struct pkt_data;
 	struct nfqnl_msg_packet_hdr *ph = nfq_get_msg_packet_hdr(tb);
 	pkt->_id = ntohl(ph->packet_id);
-	std::cout << "Rule: entering callback, Flow: " << _link._flowID << ", packet: " << pkt->_id << endl << endl;
+//	std::cout << "Rule: entering callback, Flow: " << _link._flowID << ", packet: " << pkt->_id << endl << endl;
 
 	// TODO : define delay
-/*	struct timeval tTSin;
-	nfq_get_timestamp(tb, &pkt->_outTS);
-	tTSin.tv_sec = pkt->_outTS.tv_sec;
-	tTSin.tv_usec = pkt->_outTS.tv_usec;
+//	gettimeofday(&(pkt->_outTS), NULL);
+	int ansTS = nfq_get_timestamp(tb, &(pkt->_outTS));
+	std::cout << "Rule: packet " << pkt->_id << " : result " << ansTS << endl;
+	std::cout << "Rule: packet " << pkt->_id << " came at "; _egress->printTS(pkt->_outTS);
+	(pkt->_inTS).tv_sec = pkt->_outTS.tv_sec;
+	(pkt->_inTS).tv_usec = pkt->_outTS.tv_usec;
 
 	int tTSinUsec = pkt->_outTS.tv_usec + int(_metrices._delay*1000L);
-	pkt->_outTS.tv_usec = tTSinUsec%1000000L;
-	pkt->_outTS.tv_sec += tTSinUsec/1000000L;	*/
+	(pkt->_outTS).tv_usec = tTSinUsec%1000000L;
+	(pkt->_outTS).tv_sec += tTSinUsec/1000000L;
+//	std::cout << "Rule: packet " << pkt->_id << " is going out at "; _egress->printTS(pkt->_outTS);
 
 	// packet loss
-	if (rand()/(float)RAND_MAX < _metrices._loss_ratio)
+	if (isPacketLoss()) {
+//		std::cout << "Rule: packet " << pkt->_id << " is dropped" << endl << endl;
 		*verdict = NF_DROP;
+	}
 
-	// throughput
-//	else if ((size = nfq_get_payload(tb, &data)) >= 0)
-//		*verdict = isMaxLimitExceeded(&pkt->_inTS, size);
+	// Max throughput
+	else if (isMaxLimitExceeded(&(pkt->_inTS), nfq_get_payload(tb, &data))) {
+		std::cout << "Rule: packet " << pkt->_id << " is dropped" << endl << endl;
+		*verdict = NF_DROP;
+	}
 
 	// packet reorder
-	else if (rand()/(float)RAND_MAX < _metrices._reorder_ratio) {
-		std::cout << "Rule: packet " << pkt->_id << " is queued" << endl << endl;
-		_egress->_mutex2.wait();
-		_egress->insert(pkt, "reorder");
-		_egress->_mutex2.set();
-		_egress->_emptyQ.set();
+	else if (isPacketReoder()) {
+//		std::cout << "Rule: packet " << pkt->_id << " is reordered" << endl << endl;
+		_reorderQ.push_back(pkt); // LIFO order
 		*verdict = NF_STOLEN;
 	}
 
+	// packet forward
 	else {
-		std::cout << "Rule: packet " << pkt->_id << " is sending now" << endl << endl;
-		_egress->_mutex1.wait();
-		_egress->insert(pkt, "output");
-		_egress->_mutex1.set();
-		_egress->_emptyQ.set();
+//		std::cout << "Rule: packet " << pkt->_id << " is queued now" << endl << endl;
+		while (!_reorderQ.empty()) {
+			_egress->insert(_reorderQ.back()); // LIFO order
+			_reorderQ.pop_back();
+		}
+		_egress->insert(pkt);
 		*verdict = NF_STOLEN;
 //		*verdict = NF_ACCEPT;
 	}
 
+//	return nfq_set_verdict(qh, id, verdict, 0, NULL);
 	return pkt->_id;
 }
 
@@ -211,37 +218,34 @@ u_int32_t Rule::treat_pkt(struct nfq_data *tb, u_int32_t *verdict) {
  */
 
 // Method that decides whether a packet should be dropped
-int Rule::isPass() {
+bool Rule::isPacketLoss() {
 	if (rand()/(float)RAND_MAX < _metrices._loss_ratio)
-		return NF_DROP;
-	return NF_ACCEPT;
+		return true;
+	return false;
 }
 
-int Rule::isMaxLimitExceeded(struct timeval *timestamp, size_t size) {
-	if (timercmp(timestamp, _ts, >) > 0) {
-		_counterSize = 0;
-		_ts = timestamp;
-	}
-	_counterSize += size;
-	if (_counterSize > _metrices._maxThroughput)
-		return NF_DROP;
-	return NF_ACCEPT;
+// TODO: add a limit of reorder queue - constant or defined by user
+// TODO : enforce relative constraint
+bool Rule::isPacketReoder() {
+	if (_reorderQ.size() < 10 && rand()/(float)RAND_MAX < _metrices._reorder_ratio)
+		return true;
+	return false;
 }
 
-int Rule::difftime(struct timeval *ts1, struct timeval *ts2) {
-	struct timeval *tTS = NULL;
-	tTS->tv_sec = ts1->tv_sec - ts2->tv_sec;
-	tTS->tv_usec = ts1->tv_usec - ts2->tv_usec;
-	if (tTS->tv_sec == 0) {
-		if (tTS->tv_usec == 0)
-			return 0;
-		else if (tTS->tv_usec > 0)
-			return 1;
-		else return -1;
+bool Rule::isMaxLimitExceeded(struct timeval *timestamp, size_t size) {
+//	_egress->printTS(*timestamp);
+	if (timercmp(timestamp, &_maxBWlastTS, >) > 0) {
+		_maxBWcounterSize = 0;
+		memset(&_maxBWlastTS, 0, sizeof(struct timeval));
+		_maxBWlastTS.tv_sec = 1;
+		timeradd(timestamp, &_maxBWlastTS, &_maxBWlastTS);
 	}
-	else if (tTS->tv_sec > 0)
-		return 1;
-	else return -1;
+//	std::cout << "size : " << size << endl;
+	_maxBWcounterSize += size;
+//	std::cout << "accSize : " << _maxBWcounterSize << endl;
+	if (_maxBWcounterSize > _metrices._maxThroughput)
+		return true;
+	return false;
 }
 
 void Rule::printData() {
@@ -255,8 +259,8 @@ void Rule::printData() {
 			<< "Protocol: " << _link._protocol << endl;
 
 	std::cout << "Flow metrics:" << endl
-			<< "Max Throughput: "<< _metrices._maxThroughput << endl
-			<< "Delay: " << _metrices._delay << endl
+			<< "Max Throughput: "<< _metrices._maxThroughput << " Bytes per second" << endl
+			<< "Delay: " << _metrices._delay << " Millisecond" << endl
 			<< "Packet Loss: " << _metrices._loss_ratio << endl
 			<< "Reorder: " << _metrices._reorder_ratio << endl;
 

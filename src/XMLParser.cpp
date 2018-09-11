@@ -21,12 +21,12 @@ int XMLParser::init(){
 
 void XMLParser::parseDocument(Manager &manager) {
 	Poco::XML::Node *root = _fDom->getElementsByTagName("Policy")->item(0);
-	Poco::XML::XMLString serialID = root->attributes()->getNamedItem("ID")->getNodeValue();
-	manager.setID(atoi(serialID.c_str()));
+//	Poco::XML::XMLString serialID = root->attributes()->getNamedItem("ID")->getNodeValue();
+//	manager.setID(atoi(serialID.c_str()));
 
 	Poco::XML::NodeList* policyList = root->childNodes();
 	for (uint node=0; node < policyList->length(); node++)
-		manager.insertFlow(parseRule(policyList->item(node)));
+		manager.insertRule(parseRule(policyList->item(node)));
 }
 
 Rule* XMLParser::parseRule(Poco::XML::Node* rule) {
@@ -45,7 +45,7 @@ Rule* XMLParser::parseRule(Poco::XML::Node* rule) {
 		if (node->hasAttributes())
 			attributeMap = node->attributes();
 
-		if (!nameNode.compare("LinkProperties")) {
+		if (nameNode.compare("LinkProperties") == 0) {
 			for(uint att = 0; att < attributeMap->length(); att++) {
 				attNode = attributeMap->item(att);
 				nameNode = attNode->nodeName();
@@ -66,7 +66,7 @@ Rule* XMLParser::parseRule(Poco::XML::Node* rule) {
 			}
 		}
 
-		else if (!nameNode.compare("Source")) {
+		else if (nameNode.compare("Source") == 0) {
 /*			tHost = attributeMap->getNamedItem("IPAddress")->getNodeValue();
 			tPort = attributeMap->getNamedItem("Port")->getNodeValue();
 			tLink._src = Poco::Net::SocketAddress(tHost, tPort);	*/
@@ -106,8 +106,11 @@ Rule* XMLParser::parseRule(Poco::XML::Node* rule) {
 				nameNode = attNode->nodeName();
 				value = attNode->getNodeValue();
 
-				if (nameNode.compare("Throughput") == 0)
-					tMetrics._maxThroughput = atof(value.c_str());
+				if (nameNode.compare("Throughput") == 0) {
+					if (value.compare("inf") == 0)
+						tMetrics._maxThroughput = std::numeric_limits<double>::infinity();
+					else tMetrics._maxThroughput = atof(value.c_str())/8;
+				}
 
 				else if (nameNode.compare("PacketLoss") == 0)
 					tMetrics._loss_ratio = atof(value.c_str())/100;

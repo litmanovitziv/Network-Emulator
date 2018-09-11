@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <limits>
 #include <math.h>
 #include <sys/time.h>
 
@@ -21,7 +22,7 @@
 
 #include <netinet/in.h>
 #include <linux/types.h>
-#include <linux/netfilter.h>		/* for NF_ACCEPT */
+#include <linux/netfilter.h>	// for verdict types
 #include <libnetfilter_queue/libnetfilter_queue.h>
 
 #include "Poco/Net/SocketAddress.h"
@@ -38,7 +39,7 @@ using namespace std;
 struct LinkProperties {
 	int _flowID;
 	std::string _chain;
-	Poco::Net::SocketAddress _src;
+	Poco::Net::SocketAddress _src;	// TODO : Using SocketAddress
 	Poco::Net::SocketAddress _dst;
 	std::string _protocol;
 
@@ -49,11 +50,13 @@ struct LinkProperties {
 };
 
 struct Metrics {
-	double _maxThroughput;
+	double _maxThroughput;	// TODO : convert size_t
 	double _delay;
 	double _loss_ratio;
 	double _reorder_ratio;
 };
+
+typedef std::deque<struct pkt_data*> OrderQ;
 
 class Rule {
 
@@ -66,8 +69,6 @@ class Rule {
 
 		void setLinkProperties(struct LinkProperties link);
 		void setMetrics(struct Metrics metrices);
-		void setEgress(OutputManager* egress);
-		struct nfq_q_handle *getQueue();
 
 		u_int32_t print_pkt(struct nfq_data *tb);
 		void printData();
@@ -75,10 +76,6 @@ class Rule {
 		void create(struct nfq_handle* handler);
 		void registerRule(std::string action);
 		void destroy();
-
-		int isPass();
-		int isMaxLimitExceeded(struct timeval *timestamp, size_t size);
-		int difftime(struct timeval *ts1, struct timeval *ts2);
 
 		int _task(struct nfq_q_handle *qh,
 						  struct nfgenmsg *nfmsg,
@@ -90,18 +87,21 @@ class Rule {
 		struct Metrics _metrices;
 
 		struct nfq_q_handle *_qh;
-//		std::deque<u_int32_t>* _reorderQ;
+		OrderQ _reorderQ;
 		OutputManager* _egress;
 
-		size_t _counterSize;
-		struct timeval *_ts;
+		int _maxBWcounterSize;
+		struct timeval _maxBWlastTS;
 
 		static int task(struct nfq_q_handle *qh,
 						  struct nfgenmsg *nfmsg,
 						  struct nfq_data *nfa,
 						  void *data);
-		u_int32_t treat_pkt(struct nfq_data *tb, u_int32_t *verdict);
+		u_int32_t handle_pkt(struct nfq_data *tb, u_int32_t *verdict);
 
+		bool isPacketLoss();
+		bool isMaxLimitExceeded(struct timeval *timestamp, size_t size);
+		bool isPacketReoder();
 };
 
 #endif /* RULE_H_ */

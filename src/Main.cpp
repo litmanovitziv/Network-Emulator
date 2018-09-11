@@ -10,12 +10,16 @@
 #include <iostream>
 #include <fstream>
 #include <string.h>
+#include <limits>
+
+#include "Poco/Exception.h"
 
 #include "../include/Manager.h"
 #include "../include/fileParsers/XMLParser.h"
 #include "../include/fileParsers/TXTParser.h"
 
 using namespace std;
+using Poco::Exception;
 
 Manager* installPolicy(const char* fileName) {
 	Manager *sim = new Manager();
@@ -42,11 +46,17 @@ int main(int argc, char **argv) {
 	std::cout << endl << endl;	*/
 //	ITGSend -T UDP -a 127.0.0.1 -c 100 -C 10 -t 15000 -l sender.log -x receiver.log
 
-	Manager* Sim1 = installPolicy(argv[1]);
-	Sim1->start();
-	Sim1->process();
-//	Sim1->stop();
-//	Sim1->~Manager();
+	try {
+		// Life cycle's Simulator
+		Manager* Sim1 = installPolicy(argv[1]);
+		Sim1->start();
+		Sim1->process();
+	//	Sim1->stop();
+	//	Sim1->~Manager();
+	}
+    catch (Poco::Exception& error) {
+        std::cout << "Error : " << error.displayText() << std::endl;
+    }
 
-	exit(0);
+    exit(0);
 }

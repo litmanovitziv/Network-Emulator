@@ -24,8 +24,6 @@
 #include "Poco/ThreadPool.h"
 
 #include "../include/Rule.h"
-#include "../include/Aggregator.h"
-// #include "../include/OutputManager.h"
 
 using namespace std;
 
@@ -41,7 +39,7 @@ class Manager {
 		void setID(int serialID);
 		int getID();
 
-		void insertFlow(Rule *newFlow);
+		void insertRule(Rule *newRule);
 		void start();
 		void process();
 		void stop();
@@ -50,10 +48,7 @@ class Manager {
 		int _serialID;
 		bool _isActive;
 		struct nfq_handle *_handler;
-
 		std::list<Rule*> *_rulesTable;
-		std::list<Aggregator*> *_aggregatorsTable;
-		Poco::ThreadPool _active;
 
 };
 

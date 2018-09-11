@@ -7,9 +7,9 @@
 
 #include "../include/Manager.h"
 
-Manager::Manager() : _serialID(-1), _isActive(false), _handler(0), _active(1, 16, 120, 0) {
+Manager::Manager() : _serialID(0), _isActive(false), _handler(0) {
 	_rulesTable = new std::list<Rule*>();
-	_aggregatorsTable = new std::list<Aggregator*>();
+//	_aggregatorsTable = new std::list<Aggregator*>();
 }
 
 Manager::~Manager() {
@@ -28,8 +28,6 @@ void Manager::clear() {
 	}
 	_rulesTable->clear();
 	delete _rulesTable;
-
-	delete _aggregatorsTable;
 }
 
 void Manager::setID(int serialID) {
@@ -40,12 +38,9 @@ int Manager::getID() {
 	return _serialID;
 }
 
-void Manager::insertFlow(Rule *newFlow) {
-	OutputManager* tEgress = new OutputManager();
-	_rulesTable->push_back(newFlow);
-	newFlow->setEgress(tEgress);
-	_aggregatorsTable->push_back(new Aggregator(tEgress));
-	newFlow->printData(); // TODO : Debug
+void Manager::insertRule(Rule *newRule) {
+	_rulesTable->push_back(newRule);
+	newRule->printData(); // Debug
 }
 
 void Manager::start() {
@@ -68,16 +63,10 @@ void Manager::start() {
 		exit(1);
 	}
 
-	_active.addCapacity(_rulesTable->size()-_active.capacity());
-
 	list<Rule*>::iterator rulesTableIt = _rulesTable->begin();
-	list<Aggregator*>::iterator aggTableIt = _aggregatorsTable->begin();
 	while (rulesTableIt!=_rulesTable->end()) {
 		(*rulesTableIt)->create(_handler);
-		(*aggTableIt)->setQueue((*rulesTableIt)->getQueue());
-		_active.start(**aggTableIt);	// TODO : start thread
 		rulesTableIt++;
-		aggTableIt++;
 	}
 
 	_isActive = true;
@@ -91,7 +80,7 @@ void Manager::process(){
 
 	// TODO : interrupt the simulator
 	while (_isActive && (rv = recv(fd, buf, sizeof(buf), 0)) && rv >= 0) {
-		std::cout << "pkt received" << endl << endl;
+//		std::cout << "pkt received" << endl << endl;
 		nfq_handle_packet(_handler, buf, rv);
 	}
 }
@@ -102,8 +91,6 @@ void Manager::stop() {
 		(*tableIt)->destroy();
 		tableIt++;
 	}
-
-	_active.joinAll();	// TODO : stop thread
 
 	/* normally, applications SHOULD NOT issue this command, since
 	 * it detaches other programs/sockets from AF_INET, too ! */

@@ -28,12 +28,11 @@ void TXTParser::parseDocument(Manager &manager) {
 		if (!line.compare("Policy")) {
 			_config >> line;
 			manager.setID(atoi(line.c_str()));
-			std::cout << manager.getID() << endl;
 		}
 
 		_config >> line;
 		while (!line.compare("Rule"))
-			manager.insertFlow(parseRule(&line));
+			manager.insertRule(parseRule(&line));
 	}
 }
 
@@ -98,7 +97,9 @@ Rule* TXTParser::parseRule(std::string *line) {
 
 		else if (line->compare("Throughput") == 0) {
 			_config >> *line;
-			tMetrics._maxThroughput = atof(line->c_str());
+			if (line->compare("inf") == 0)
+				tMetrics._maxThroughput = std::numeric_limits<double>::infinity();
+			else tMetrics._maxThroughput = atof(line->c_str())/8;
 		}
 
 		else if (line->compare("PacketLoss") == 0) {
