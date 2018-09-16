@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Policy ID="1">
+  <Rule>
+    <LinkProperties Flow="1" Chain="OUTPUT" Protocol="icmp">
+      <Source IPAddress="" Port=""/>
+      <Destination IPAddress="" Port=""/>
+    </LinkProperties>
+    <Metrics Throughput="inf" PacketLoss="0" Reordering="0" Delay="0"/>
+  </Rule>
+</Policy>
