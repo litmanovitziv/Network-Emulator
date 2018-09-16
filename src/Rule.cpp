@@ -10,13 +10,13 @@ using namespace std;
 
 Rule::Rule(struct LinkProperties link, struct Metrics metrics) :
 		_qh(0), _reorderQ(), _egress(new OutputManager()), _maxBWcounterSize(0) {
-	memset(&_maxBWlastTS, 0, sizeof(struct timeval));
+	timerclear(&_maxBWlastTS);
 
 	_link._flowID = link._flowID;
 	_link._chain = link._chain;
 	_link._protocol = link._protocol;
-	_link._src = link._src;
-	_link._dst = link._dst;
+//	_link._src = link._src;
+//	_link._dst = link._dst;
 	_link._dstHost = link._dstHost;
 	_link._dstPort = link._dstPort;
 	_link._srcHost = link._srcHost;
@@ -29,26 +29,37 @@ Rule::Rule(struct LinkProperties link, struct Metrics metrics) :
 }
 
 Rule::~Rule(){
-	destroy();
-	this->clear();
+	if (_qh != 0) {
+		destroy();
+		this->clear();
+	}
 }
 
 void Rule::clear() {
 	delete _qh;
+	_egress->~OutputManager();
 }
 
+/**
+ * copy link properties structure
+ * @param struct LinkProperties
+ */
 void Rule::setLinkProperties(struct LinkProperties link) {
 	_link._flowID = link._flowID;
 	_link._chain = link._chain;
 	_link._protocol = link._protocol;
-	_link._src = link._src;
-	_link._dst = link._dst;
+//	_link._src = link._src;
+//	_link._dst = link._dst;
 	_link._dstHost = link._dstHost;
 	_link._dstPort = link._dstPort;
 	_link._srcHost = link._srcHost;
 	_link._srcPort = link._srcPort;
 }
 
+/**
+ * copy metrics structure
+ * @param struct Metrics
+ */
 void Rule::setMetrics(struct Metrics metrics) {
 	_metrices._maxThroughput = metrics._maxThroughput;
 	_metrices._delay = metrics._delay;
@@ -56,17 +67,26 @@ void Rule::setMetrics(struct Metrics metrics) {
 	_metrices._reorder_ratio = metrics._reorder_ratio;
 }
 
+int Rule::getFlow() {
+	return _link._flowID;
+}
+
+/**
+ * construct dedicated queue
+ * @param struct nfq_handle* netlink queue
+ */
 void Rule::create(struct nfq_handle* handler) {
 	std::cout << "binding this socket to queue " << _link._flowID << endl << endl;
-	if ((_qh = nfq_create_queue(handler, _link._flowID, &task, this)) < 0){ // the bug is here
+	if ((_qh = nfq_create_queue(handler, _link._flowID, &task, this)) < 0) { // the bug is here
 		std::cout << "error during nfq_create_queue()" << endl << endl;
-		exit(1);
+		throw new Poco::Exception("A queue handle can't create");
 	}
 
 	std::cout << "setting copy_packet mode" << endl << endl;
 	if (nfq_set_mode(_qh, NFQNL_COPY_PACKET, 0xffff) < 0) {
 		std::cout << "can't set packet_copy mode " << endl << endl;
-		exit(1);
+		nfq_destroy_queue(_qh);
+		throw new Poco::Exception("can't set packet_copy mode");
 	}
 
 	std::cout << "register this rule into iptables " << _link._flowID << endl << endl;
@@ -74,20 +94,25 @@ void Rule::create(struct nfq_handle* handler) {
 	_egress->start(_qh);
 }
 
+/**
+ * Register a rule into Iptable, using system command
+ *
+ * @param string desirable action - Append or Delete
+ */
 void Rule::registerRule(std::string action) {
-	std::ostringstream command, tmp1, tmp2;
+	std::ostringstream command, tmp;
 
 	command << "iptables"
 			<< " -" << action << (_link._chain.empty() ? " FORWARD" : " ") << _link._chain
 			<< (_link._protocol.empty() ? "" : " -p ") << _link._protocol;
 
 	command << (_link._srcHost.empty() ? "" : " -s ") << _link._srcHost;
-	tmp1 << " --sport " << _link._srcPort;
-	command	<< (_link._srcPort>0 ? tmp1.str().c_str() : "");
+	tmp << " --sport " << _link._srcPort;
+	command	<< (_link._srcPort>0 ? tmp.str().c_str() : "");
 
 	command << (_link._dstHost.empty() ? "" : " -d ") << _link._dstHost;
-	tmp2 << " --dport " << _link._dstPort;
-	command	<< (_link._dstPort>0 ? tmp2.str().c_str() : "");
+	tmp << " --dport " << _link._dstPort;
+	command	<< (_link._dstPort>0 ? tmp.str().c_str() : "");
 
 /*	command << (_link._src.host().toString().empty() ? "" : " -s ") << _link._src.host().toString();
 	tmp1 << " --sport " << _link._src.port();
@@ -102,7 +127,7 @@ void Rule::registerRule(std::string action) {
 
 	std::cout << command.str() << endl << endl;
 	system(command.str().c_str());
-	sleep(30);
+	sleep(10);
 
 //	sudo iptables -A OUTPUT -p icmp -j NFQUEUE --queue-num 0
 //	sudo iptables -A INPUT -p tcp -s localhost -d localhost -dport 4444 -j NFQUEUE --queue-num 1
@@ -110,10 +135,13 @@ void Rule::registerRule(std::string action) {
 //	sudo iptables -A INPUT -p tcp -s localhost -d localhost --dport 4444 -j NFQUEUE --queue-num 1
 }
 
+/**
+ * destroy the proper queue and evacuate associated queues
+ */
 void Rule::destroy() {
 	std::cout << "Unregister this rule into iptables " << _link._flowID << endl << endl;
 	registerRule("D");
-	_egress->~OutputManager();
+	_egress->stop();
 
 	struct pkt_data *pkt;
 	while (!_reorderQ.empty()){
@@ -128,6 +156,7 @@ void Rule::destroy() {
 	nfq_destroy_queue(this->_qh);
 }
 
+// callback function
 int Rule::task(struct nfq_q_handle *qh,
 				  struct nfgenmsg *nfmsg,
 				  struct nfq_data *nfa,
@@ -142,7 +171,7 @@ int Rule::_task(struct nfq_q_handle *qh,
 				  struct nfq_data *nfa,
 				  void *data)
 {
-	u_int32_t id, verdict, ans;
+	u_int32_t id, verdict;
 //	std::cout << "Rule: entering callback, Flow: " << _link._flowID << endl << endl;
 
 //	struct nfqnl_msg_packet_hdr *ph = nfq_get_msg_packet_hdr(nfa);
@@ -150,35 +179,41 @@ int Rule::_task(struct nfq_q_handle *qh,
 //	id = print_pkt(nfa);
 	id = handle_pkt(nfa, &verdict);
 //	std::cout << "Rule: packet " << id << " is " << verdict << endl << endl;
-	ans = nfq_set_verdict(qh, id, verdict, 0, NULL);
+	return nfq_set_verdict(qh, id, verdict, 0, NULL);
 //	ans = nfq_set_verdict(qh, id, NF_ACCEPT, 0, NULL);
-	return ans;
 }
 
+/**
+ * manipulating the packet
+ *
+ * @param struct nfq_data* payload of packet
+ * @param u_int32_t* pointer to verdict
+ * @return u_int32_t ID assigned to packet by netfilter
+ */
 u_int32_t Rule::handle_pkt(struct nfq_data *tb, u_int32_t *verdict) {
 //	u_int32_t id;
 	unsigned char *data;
 	struct pkt_data *pkt = new struct pkt_data;
 	struct nfqnl_msg_packet_hdr *ph = nfq_get_msg_packet_hdr(tb);
 	pkt->_id = ntohl(ph->packet_id);
-//	std::cout << "Rule: entering callback, Flow: " << _link._flowID << ", packet: " << pkt->_id << endl << endl;
+	// std::cout << "Rule: entering callback, Flow: " << _link._flowID << ", packet: " << pkt->_id << endl << endl;
 
 	// TODO : define delay
-//	gettimeofday(&(pkt->_outTS), NULL);
-	int ansTS = nfq_get_timestamp(tb, &(pkt->_outTS));
-	std::cout << "Rule: packet " << pkt->_id << " : result " << ansTS << endl;
-	std::cout << "Rule: packet " << pkt->_id << " came at "; _egress->printTS(pkt->_outTS);
-	(pkt->_inTS).tv_sec = pkt->_outTS.tv_sec;
-	(pkt->_inTS).tv_usec = pkt->_outTS.tv_usec;
+	gettimeofday(&(pkt->_inTS), NULL);
+//	int ansTS = nfq_get_timestamp(tb, &(pkt->_inTS));	// TODO : retrieve timestamp
+//	std::cout << "Rule: packet " << pkt->_id << " : result " << ansTS << endl;
+//	std::cout << "Rule: packet " << pkt->_id << " came at "; _egress->printTS(pkt->_outTS);
+	(pkt->_outTS).tv_sec = pkt->_inTS.tv_sec;
+	(pkt->_outTS).tv_usec = pkt->_inTS.tv_usec;
 
-	int tTSinUsec = pkt->_outTS.tv_usec + int(_metrices._delay*1000L);
-	(pkt->_outTS).tv_usec = tTSinUsec%1000000L;
-	(pkt->_outTS).tv_sec += tTSinUsec/1000000L;
-//	std::cout << "Rule: packet " << pkt->_id << " is going out at "; _egress->printTS(pkt->_outTS);
+	std::cout << "Rule: entering callback"
+			<< ", Flow: " << _link._flowID
+			<< ", packet " << pkt->_id
+			<< " enter at "; _egress->printTS(pkt->_inTS);
 
 	// packet loss
 	if (isPacketLoss()) {
-//		std::cout << "Rule: packet " << pkt->_id << " is dropped" << endl << endl;
+	//	std::cout << "Rule: packet " << pkt->_id << " is dropped" << endl << endl;
 		*verdict = NF_DROP;
 	}
 
@@ -190,16 +225,18 @@ u_int32_t Rule::handle_pkt(struct nfq_data *tb, u_int32_t *verdict) {
 
 	// packet reorder
 	else if (isPacketReoder()) {
-//		std::cout << "Rule: packet " << pkt->_id << " is reordered" << endl << endl;
+	//	std::cout << "Rule: packet " << pkt->_id << " is reordered" << endl << endl;
 		_reorderQ.push_back(pkt); // LIFO order
 		*verdict = NF_STOLEN;
 	}
 
 	// packet forward
 	else {
-//		std::cout << "Rule: packet " << pkt->_id << " is queued now" << endl << endl;
+	//	std::cout << "Rule: packet " << pkt->_id << " is queued now" << endl << endl;
+		setDelay(pkt, NULL);
 		while (!_reorderQ.empty()) {
 			_egress->insert(_reorderQ.back()); // LIFO order
+			setDelay(_reorderQ.back(), &(pkt->_outTS));
 			_reorderQ.pop_back();
 		}
 		_egress->insert(pkt);
@@ -224,6 +261,7 @@ bool Rule::isPacketLoss() {
 	return false;
 }
 
+// Method that decides whether a packet should be reorder
 // TODO: add a limit of reorder queue - constant or defined by user
 // TODO : enforce relative constraint
 bool Rule::isPacketReoder() {
@@ -236,7 +274,7 @@ bool Rule::isMaxLimitExceeded(struct timeval *timestamp, size_t size) {
 //	_egress->printTS(*timestamp);
 	if (timercmp(timestamp, &_maxBWlastTS, >) > 0) {
 		_maxBWcounterSize = 0;
-		memset(&_maxBWlastTS, 0, sizeof(struct timeval));
+		timerclear(&_maxBWlastTS);
 		_maxBWlastTS.tv_sec = 1;
 		timeradd(timestamp, &_maxBWlastTS, &_maxBWlastTS);
 	}
@@ -248,6 +286,26 @@ bool Rule::isMaxLimitExceeded(struct timeval *timestamp, size_t size) {
 	return false;
 }
 
+/**
+ * define output timestamp including delay
+ *
+ * @param struct pkt_data* packet structure
+ * @param struct timeval* new timestamp
+ */
+void Rule::setDelay(struct pkt_data *pkt, struct timeval *newOutTS) {
+	if (newOutTS == NULL) {
+		int tTSinUsec = (pkt->_outTS).tv_usec + int(_metrices._delay*1000L);
+		(pkt->_outTS).tv_usec = tTSinUsec%1000000L;
+		(pkt->_outTS).tv_sec += tTSinUsec/1000000L;
+	}
+
+	else {
+		(pkt->_outTS).tv_sec = newOutTS->tv_sec;
+		(pkt->_outTS).tv_usec = newOutTS->tv_usec;
+	}
+}
+
+// For debugging
 void Rule::printData() {
 //	std::cout << "Print rule" << endl;
 	std::cout << "Flow no. " << _link._flowID << endl
@@ -267,7 +325,7 @@ void Rule::printData() {
 	std::cout << endl;
 }
 
-/* returns packet id */
+// returns packet id
 u_int32_t Rule::print_pkt (struct nfq_data *tb) {
 	int id = 0;
 	struct nfqnl_msg_packet_hdr *ph;

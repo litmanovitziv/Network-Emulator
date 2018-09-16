@@ -1,6 +1,6 @@
 #include "../include/fileParsers/TXTParser.h"
 
-TXTParser::TXTParser(std::string fileName) : _fTXTFileName(fileName), _config() {} // ,_fileName(fileName) {}
+TXTParser::TXTParser(std::string fileName) : _fTXTFileName(fileName), _config() {}
 
 TXTParser::~TXTParser() {
 	this->clear();
@@ -28,18 +28,19 @@ void TXTParser::parseDocument(Manager &manager) {
 		if (!line.compare("Policy")) {
 			_config >> line;
 			manager.setID(atoi(line.c_str()));
+			std::cout << "Policy no. " << manager.getID() << endl << endl;	// Debug
 		}
 
 		_config >> line;
-		while (!line.compare("Rule"))
-			manager.insertRule(parseRule(&line));
+		for (int rule=0; !line.compare("Rule"); rule++)
+			manager.insertRule(parseRule(rule, &line));
 	}
 }
 
-Rule* TXTParser::parseRule(std::string *line) {
+Rule* TXTParser::parseRule(int flowID, std::string *line) throw() {
 	std::string tHost, tPort;
-	struct LinkProperties tLink;
-	struct Metrics tMetrics;
+	struct LinkProperties tLink = {flowID, "FORWARD", "", "", 0, "", 0};
+	struct Metrics tMetrics = {std::numeric_limits<double>::infinity(), 0, 0, 0};
 
 	while (!_config.eof()) {
 		_config >> *line;
@@ -97,9 +98,8 @@ Rule* TXTParser::parseRule(std::string *line) {
 
 		else if (line->compare("Throughput") == 0) {
 			_config >> *line;
-			if (line->compare("inf") == 0)
-				tMetrics._maxThroughput = std::numeric_limits<double>::infinity();
-			else tMetrics._maxThroughput = atof(line->c_str())/8;
+			if (line->compare("inf") != 0)
+				tMetrics._maxThroughput = atof(line->c_str())/8;
 		}
 
 		else if (line->compare("PacketLoss") == 0) {

@@ -18,8 +18,8 @@
 #include "../include/fileParsers/XMLParser.h"
 #include "../include/fileParsers/TXTParser.h"
 
-using namespace std;
 using Poco::Exception;
+using namespace std;
 
 Manager* installPolicy(const char* fileName) {
 	Manager *sim = new Manager();
@@ -50,12 +50,12 @@ int main(int argc, char **argv) {
 		// Life cycle's Simulator
 		Manager* Sim1 = installPolicy(argv[1]);
 		Sim1->start();
-		Sim1->process();
+		Sim1->run();
 	//	Sim1->stop();
 	//	Sim1->~Manager();
 	}
-    catch (Poco::Exception& error) {
-        std::cout << "Error : " << error.displayText() << std::endl;
+    catch (Poco::Exception* error) {
+        std::cout << "Error : " << error->displayText() << std::endl;
     }
 
     exit(0);

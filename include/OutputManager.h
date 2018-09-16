@@ -30,6 +30,7 @@
 #include "Poco/Thread.h"
 
 using namespace std;
+using Poco::Thread;
 
 struct pkt_data {
 	u_int32_t _id;
@@ -47,6 +48,7 @@ class OutputManager : public Poco::Runnable {
 
 		void start(struct nfq_q_handle *qh);
 		void run();
+		void stop();
 
 		void insert(struct pkt_data* pkt);
 		struct pkt_data* remove();
@@ -57,13 +59,13 @@ class OutputManager : public Poco::Runnable {
 		void clear();
 		void delay(struct timeval output_ts);
 
-		int n;
 		Poco::Semaphore _QRdWrMutex;
 		Poco::Semaphore _QisEmpty;
 
 		struct nfq_q_handle *_qh;
 		PktQ _egressQ;
 		Poco::Thread _thread;
+		bool _isActive;
 
 };
 

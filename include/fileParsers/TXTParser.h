@@ -26,7 +26,7 @@ public:
 	void clear();
 	int init();
 	void parseDocument(Manager &manager);
-	Rule* parseRule(std::string *line);
+	Rule* parseRule(int flowID, std::string *line) throw();
 
 };
 

@@ -26,6 +26,7 @@
 #include <libnetfilter_queue/libnetfilter_queue.h>
 
 #include "Poco/Net/SocketAddress.h"
+#include "Poco/StringTokenizer.h"
 
 #include "../include/OutputManager.h"
 
@@ -39,10 +40,10 @@ using namespace std;
 struct LinkProperties {
 	int _flowID;
 	std::string _chain;
-	Poco::Net::SocketAddress _src;	// TODO : Using SocketAddress
-	Poco::Net::SocketAddress _dst;
-	std::string _protocol;
+	// Poco::Net::SocketAddress _src;	// TODO : Using SocketAddress
+	// Poco::Net::SocketAddress _dst;
 
+	std::string _protocol;
 	std::string _srcHost;
 	int _srcPort;
 	std::string _dstHost;
@@ -69,18 +70,19 @@ class Rule {
 
 		void setLinkProperties(struct LinkProperties link);
 		void setMetrics(struct Metrics metrices);
+		int getFlow();
 
 		u_int32_t print_pkt(struct nfq_data *tb);
 		void printData();
-
-		void create(struct nfq_handle* handler);
-		void registerRule(std::string action);
-		void destroy();
 
 		int _task(struct nfq_q_handle *qh,
 						  struct nfgenmsg *nfmsg,
 						  struct nfq_data *nfa,
 						  void *data);
+
+		void create(struct nfq_handle* handler);
+		void registerRule(std::string action);
+		void destroy();
 
 	private:
 		struct LinkProperties _link;
@@ -100,8 +102,9 @@ class Rule {
 		u_int32_t handle_pkt(struct nfq_data *tb, u_int32_t *verdict);
 
 		bool isPacketLoss();
-		bool isMaxLimitExceeded(struct timeval *timestamp, size_t size);
 		bool isPacketReoder();
+		bool isMaxLimitExceeded(struct timeval *timestamp, size_t size);
+		void setDelay(struct pkt_data *pkt, struct timeval *newOutTS);
 };
 
 #endif /* RULE_H_ */

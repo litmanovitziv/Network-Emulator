@@ -1,13 +1,18 @@
 #include "../include/fileParsers/XMLParser.h"
 
-XMLParser::XMLParser(std::string fileName) : _fXMLFileName(fileName) {}
+XMLParser::XMLParser(std::string fileName) :
+	_XMLserialID(0), _fXMLFileName(fileName), _fDom() {}
 
 XMLParser::~XMLParser() {
+	this->clear();
+}
+
+void XMLParser::clear() {
 	_fDom->release();
 }
 
-int XMLParser::init(){
-	//get the factory
+void XMLParser::init() {
+	// get the factory
 	Poco::XML::DOMParser parser;
 
 	// filters white space nodes v1.4.2p
@@ -15,23 +20,35 @@ int XMLParser::init(){
 
 	// parse using builder to get fDom representation of the XML file
 	_fDom = parser.parse(_fXMLFileName);
-
-	return 0;
 }
 
+/**
+ * parse the rules by input file
+ *
+ * @param manager reference to simulator
+ */
 void XMLParser::parseDocument(Manager &manager) {
 	Poco::XML::Node *root = _fDom->getElementsByTagName("Policy")->item(0);
-//	Poco::XML::XMLString serialID = root->attributes()->getNamedItem("ID")->getNodeValue();
-//	manager.setID(atoi(serialID.c_str()));
+	Poco::XML::XMLString ruleID, policyID = root->attributes()->getNamedItem("ID")->getNodeValue();
+	manager.setID(atoi(policyID.c_str()));
+	std::cout << "Policy no. " << manager.getID() << endl << endl;	// Debug
 
 	Poco::XML::NodeList* policyList = root->childNodes();
 	for (uint node=0; node < policyList->length(); node++)
-		manager.insertRule(parseRule(policyList->item(node)));
+		if (policyList->item(node)->hasChildNodes())
+			manager.insertRule(parseRule(node, policyList->item(node)));
 }
 
-Rule* XMLParser::parseRule(Poco::XML::Node* rule) {
-	struct LinkProperties tLink;;
-	struct Metrics tMetrics;
+/**
+ * parse specific rule
+ *
+ * @param flowID a number of rule
+ * @param rule an appropriate record
+ * @return Rule* the parsed rule
+ */
+Rule* XMLParser::parseRule(int flowID, Poco::XML::Node* rule) {
+	struct LinkProperties tLink = {flowID, "FORWARD", "", "", 0, "", 0};
+	struct Metrics tMetrics = {std::numeric_limits<double>::infinity(), 0, 0, 0};
 
 	Poco::XML::NodeIterator ruleIterator(Poco::XML::NodeIterator(rule, Poco::XML::NodeFilter::SHOW_ALL));
 	Poco::XML::Node *node, *attNode;
@@ -48,20 +65,21 @@ Rule* XMLParser::parseRule(Poco::XML::Node* rule) {
 		if (nameNode.compare("LinkProperties") == 0) {
 			for(uint att = 0; att < attributeMap->length(); att++) {
 				attNode = attributeMap->item(att);
-				nameNode = attNode->nodeName();
+				attName = attNode->nodeName();
 				value = attNode->getNodeValue();
 
-				if (nameNode.compare("Flow") == 0)
+				if (attName.compare("Flow") == 0) {	// TODO : checking
 					tLink._flowID = atoi(value.c_str());
+				}
 
-				else if (nameNode.compare("Chain") == 0) {
+				else if (attName.compare("Chain") == 0) {
 					tLink._chain = value;	// TODO : Define cases
 				}
 
-				else if (nameNode.compare("Protocol") == 0) {
-					if (value.compare("all") != 0)
-						tLink._protocol = value;
-					else tLink._protocol = "";
+				else if (attName.compare("Protocol") == 0) {
+					if (value.empty())
+						throw new Poco::Exception("Protocol isn't defined");
+					else tLink._protocol = value;
 				}
 			}
 		}
@@ -69,18 +87,15 @@ Rule* XMLParser::parseRule(Poco::XML::Node* rule) {
 		else if (nameNode.compare("Source") == 0) {
 /*			tHost = attributeMap->getNamedItem("IPAddress")->getNodeValue();
 			tPort = attributeMap->getNamedItem("Port")->getNodeValue();
-			tLink._src = Poco::Net::SocketAddress(tHost, tPort);	*/
+			tLink._src = Poco::Net::SocketAddress(tHost, attName);	*/
 
 			value = attributeMap->getNamedItem("IPAddress")->getNodeValue();
-			if (value.compare("all") != 0) {
-				tLink._srcHost = value;
-				value = attributeMap->getNamedItem("Port")->getNodeValue();
-				tLink._srcPort = atoi(value.c_str());
-			}
-			else {
-				tLink._srcHost = "";
-				tLink._srcPort = 0;
-			}
+			tLink._srcHost = (value.empty() ? "" : validate_add(value));
+
+			value = attributeMap->getNamedItem("Port")->getNodeValue();
+			tLink._srcPort = atoi(value.c_str());
+			if (tLink._srcPort < 0)
+				throw new Poco::Exception("Source Port isn't valid");	// TODO : handling Exception
 		}
 
 		else if (!nameNode.compare("Destination")) {
@@ -89,15 +104,12 @@ Rule* XMLParser::parseRule(Poco::XML::Node* rule) {
 			tLink._dst = Poco::Net::SocketAddress(tHost, tPort);	*/
 
 			value = attributeMap->getNamedItem("IPAddress")->getNodeValue();
-			if (value.compare("all") != 0) {
-				tLink._dstHost = value;
-				value = attributeMap->getNamedItem("Port")->getNodeValue();
-				tLink._dstPort = atoi(value.c_str());
-			}
-			else {
-				tLink._srcHost = "";
-				tLink._dstPort = 0;
-			}
+			tLink._dstHost = (value.empty() ? "" : validate_add(value));
+
+			value = attributeMap->getNamedItem("Port")->getNodeValue();
+			tLink._dstPort = atoi(value.c_str());
+			if (tLink._dstPort < 0)
+				throw new Poco::Exception("Destination Port isn't valid");	// TODO : handling Exception
 		}
 
 		if (!nameNode.compare("Metrics")) {
@@ -106,11 +118,11 @@ Rule* XMLParser::parseRule(Poco::XML::Node* rule) {
 				nameNode = attNode->nodeName();
 				value = attNode->getNodeValue();
 
-				if (nameNode.compare("Throughput") == 0) {
-					if (value.compare("inf") == 0)
-						tMetrics._maxThroughput = std::numeric_limits<double>::infinity();
-					else tMetrics._maxThroughput = atof(value.c_str())/8;
-				}
+				if (atof(value.c_str()) < 0)
+					throw new Poco::Exception(nameNode + " isn't valid");
+
+				if (nameNode.compare("Throughput") == 0 && value.compare("inf") != 0)
+						tMetrics._maxThroughput = atof(value.c_str())/8;
 
 				else if (nameNode.compare("PacketLoss") == 0)
 					tMetrics._loss_ratio = atof(value.c_str())/100;
@@ -129,5 +141,16 @@ Rule* XMLParser::parseRule(Poco::XML::Node* rule) {
 	return new Rule(tLink, tMetrics);
 }
 
-/*
-*/
+std::string XMLParser::validate_add(std::string add) {
+	Poco::StringTokenizer tAdd(add, ",");
+	Poco::StringTokenizer::Iterator numsIt = tAdd.begin();
+
+	if (tAdd.count() != 4)
+		throw new Poco::Exception("IP Address isn't valid");	// TODO : handling Exception
+
+	for (; numsIt != tAdd.end(); numsIt++)
+		if (0 <= atoi((*numsIt).c_str()) && atoi((*numsIt).c_str()) <= 255)
+			throw new Poco::Exception("IP Address isn't valid");	// TODO : handling Exception
+
+	return add;
+}
