@@ -1,7 +1,7 @@
 Network Emulator
 ================
 
-Network Emulator emulates tracking of packets over TCP/IP stack. The emulator emulates network conditions using [NetFilter](http://www.netfilter.org/), a packet filtering framework.
+[Network Emulator](https://docs.google.com/document/d/1UaD1R8dmk1E3P5k9slXId1JTRKIB9PGO378hn4ocWKI/edit) emulates tracking of packets over TCP/IP stack. The emulator emulates network conditions using [NetFilter](http://www.netfilter.org/), a packet filtering framework.
 
 As following the main features :
 
